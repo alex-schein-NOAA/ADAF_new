@@ -55,7 +55,7 @@ class Trainer:
         # Set up local node
         torch.cuda.set_device(self.params.local_rank)
         self.device = torch.device("cuda", self.params.local_rank)
-        print(f"world_rank: {self.params.world_rank} | local_rank: {self.params.local_rank} | device: {self.device}")
+        print(f"world_rank: {self.params.world_rank} | local_rank: {self.params.local_rank} | device: {self.device} | num_data_workers={self.params.num_data_workers}")
         
         # Load model
         from models.encdec import EncDec as model #EncDec_two_encoder in the original script doesn't exist...
@@ -166,7 +166,8 @@ class Trainer:
     ##########
     
     def train_one_epoch(self):
-        print(f"Training...")
+        if self.params.log_to_screen and self.params.world_rank==0: #only print once
+            print(f"Training...")
         self.epoch += 1
         #no resuming code here yet
         tr_time = 0
@@ -277,7 +278,8 @@ class Trainer:
     ##########
 
     def validate_one_epoch(self):
-        print("Validating...")
+        if self.params.log_to_screen and self.params.world_rank==0: #only print once
+            print("Validating...")
         self.model.eval()
 
         valid_buff = torch.zeros((4), dtype=torch.float32, device=self.device)
@@ -377,7 +379,7 @@ class Trainer:
 
     # (2026-06-05) Not used in this script; should be used externally for inference, though maybe this is better suited to be spun off into its own thing, not dependent on Trainer params
     def load_model(self, model_path): 
-        if self.params.log_to_screen:
+        if self.params.log_to_screen and self.params.world_rank==0: #only print once
             print(f"Loading the model weights from {model_path}")
 
         checkpoint = torch.load(model_path, map_location=f"cuda:{self.params.local_rank}")
@@ -403,7 +405,7 @@ class Trainer:
     ##########
 
     def train(self):
-        if self.params.log_to_screen:
+        if self.params.log_to_screen and self.params.world_rank==0: #only print once
             print("Starting the main training loop...")
 
         best_train_loss = 1.0e6
@@ -419,7 +421,7 @@ class Trainer:
             current_lr = self.optimizer.param_groups[0]["lr"]
             # No plotting code here
 
-            if self.params.log_to_screen:
+            if self.params.log_to_screen and self.params.world_rank==0: #only print once
                 print(f"Epoch: {epoch + 1}")
                 print(f"Training data load time={data_time}")
                 print(f"Training per-step time={step_time}")
@@ -428,12 +430,9 @@ class Trainer:
 
             # validate one epoch
             if (epoch != 0) and (epoch % self.params.valid_frequency == 0):
-                if self.params.log_to_screen:
-                    print(f"Validating...")
-                
                 valid_time, valid_logs = self.validate_one_epoch()
                 
-                if self.params.log_to_screen:
+                if self.params.log_to_screen and self.params.world_rank==0: #only print once
                     print(f"Valid time={valid_time}")
                     print(f"Valid loss={valid_logs['valid_loss_field']}")
 
@@ -444,18 +443,18 @@ class Trainer:
                     self.scheduler.step(valid_logs["valid_loss_field"])
 
             # Save model checkpoint
-            if (self.world_rank == 0 and epoch % self.params.save_model_freq == 0 and self.params.save_checkpoint):
+            if (self.params.world_rank == 0 and epoch % self.params.save_model_freq == 0 and self.params.save_checkpoint):
                 self.save_checkpoint(self.params.checkpoint_path)
 
             # If model is the best yet (regardless of save_model_freq), save to the best checkpoint path
             # !! This will wipe out the previous best model !! Needs modification for that case
-            if (self.world_rank == 0 and self.params.save_checkpoint):
+            if (self.params.world_rank == 0 and self.params.save_checkpoint):
                 if train_logs["loss_field"] <= best_train_loss:
                     print(f"Loss improved from {best_train_loss} to {train_logs["loss_field"]}")
                     best_train_loss = train_logs["loss_field"]
                     self.save_checkpoint(self.params.best_checkpoint_path)
         
-        if self.params.log_to_screen:
+        if self.params.log_to_screen and self.params.world_rank==0: #only print once
             print(f"!!! Training finished !!!")
             print(f"Epochs: {epoch + 1}")
             print(f"Final epoch's loss: {train_logs['loss_field']}")
@@ -495,7 +494,7 @@ class Params:
         self.mlp_ratio = 2
 
         # --- Unique variables from the intermediate class ---
-        self.batch_size = 8 #12
+        self.batch_size = 12
         self.num_data_workers = 4
         self.n_in_channels = 17
         self.n_out_channels = 5
@@ -564,11 +563,11 @@ if __name__ == "__main__":
     local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", 1))
     slurm_cpus_per_task = int(os.environ.get("SLURM_CPUS_PER_TASK", "4"))
     workers_per_rank_cap = max(1, slurm_cpus_per_task // max(local_world_size, 1) - 1)
-    params.num_data_workers = 2 #min(int(params.num_data_workers), workers_per_rank_cap)
-    print(
-        f"SLURM_CPUS_PER_TASK={slurm_cpus_per_task}, LOCAL_WORLD_SIZE={local_world_size}, "
-        f"num_data_workers={params.num_data_workers}"
-    )
+    params.num_data_workers = min(int(params.num_data_workers), workers_per_rank_cap) #4 #6 
+    # print(
+    #     f"SLURM_CPUS_PER_TASK={slurm_cpus_per_task}, LOCAL_WORLD_SIZE={local_world_size}, "
+    #     f"num_data_workers={params.num_data_workers}"
+    # )
     
     # Get SLURM info for DDP and set params
     params.world_size = int(os.environ.get("WORLD_SIZE")) 
