@@ -495,7 +495,7 @@ class Params:
         self.mlp_ratio = 2
 
         # --- Unique variables from the intermediate class ---
-        self.batch_size = 12 #4
+        self.batch_size = 8 #12
         self.num_data_workers = 4
         self.n_in_channels = 17
         self.n_out_channels = 5
@@ -564,7 +564,7 @@ if __name__ == "__main__":
     local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", 1))
     slurm_cpus_per_task = int(os.environ.get("SLURM_CPUS_PER_TASK", "4"))
     workers_per_rank_cap = max(1, slurm_cpus_per_task // max(local_world_size, 1) - 1)
-    params.num_data_workers = 12 #min(int(params.num_data_workers), workers_per_rank_cap)
+    params.num_data_workers = 2 #min(int(params.num_data_workers), workers_per_rank_cap)
     print(
         f"SLURM_CPUS_PER_TASK={slurm_cpus_per_task}, LOCAL_WORLD_SIZE={local_world_size}, "
         f"num_data_workers={params.num_data_workers}"

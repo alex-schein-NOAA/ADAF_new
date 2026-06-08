@@ -3,13 +3,14 @@
 #SBATCH --qos=gpu
 #SBATCH --partition=u1-h100
 #SBATCH -J ADAF_test
-#SBATCH -o ADAF_test_%J.out
-#SBATCH -e ADAF_test_%J.err
+#SBATCH -o TEST_JOB_LOGS/ADAF_test_%J.out
+#SBATCH -e TEST_JOB_LOGS/ADAF_test_%J.err
 
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1          # BACK TO: one launcher task per node
 #SBATCH --cpus-per-task=24
 #SBATCH --gres=gpu:2                 # 2 GPUs per node
+#SBATCH --mem=0
 # NO --gpus-per-task - let all GPUs be visible to the launcher task
 
 #SBATCH -t 1:30:00
