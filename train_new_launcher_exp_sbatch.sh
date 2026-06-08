@@ -2,9 +2,9 @@
 #SBATCH --account gpu-ghpcs
 #SBATCH --qos=gpu
 #SBATCH --partition=u1-h100
-#SBATCH -J ADAF_test_20250605
-#SBATCH -o ADAF_test_20250605.out
-#SBATCH -e ADAF_test_20250605.err
+#SBATCH -J ADAF_test
+#SBATCH -o ADAF_test_%J.out
+#SBATCH -e ADAF_test_%J.err
 
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1          # BACK TO: one launcher task per node
@@ -75,8 +75,6 @@ srun --ntasks-per-node=2 --mpi=none \
 
 srun --ntasks-per-node=1 --mpi=none \
      --gres=gpu:2 \
-     --gpu-bind=map_gpu:0,1 \
-#   torchrun \
     python -m torch.distributed.run \
     --nnodes="${NNODES}" \
     --nproc_per_node=2 \
