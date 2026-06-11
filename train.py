@@ -110,7 +110,8 @@ class Trainer:
 
         # %% Resume train
         if self.params.resuming:
-            print(f"Loading checkpoint from {self.params.best_checkpoint_path}")
+            if self.params.log_to_screen and self.params.world_rank==0:
+                print(f"Loading checkpoint from {self.params.best_checkpoint_path}")
             self.restore_checkpoint(self.params.best_checkpoint_path)
         
         self.epoch = self.startEpoch
@@ -443,9 +444,9 @@ class Trainer:
             # LR scheduler
             # (2026-06-05) Does having this operate only on validated epochs cause issues? 
                 # If only every 5th epoch is validated and patience = 20, does that mean 100 epochs to reduce LR when it should be 20? Test this later
-            # (2026-06-11) Changing this to oeprate every epoch, not just per validation epoch
+            # (2026-06-11) Changing this to operate every epoch, not just per validation epoch
             if self.params.scheduler == "ReduceLROnPlateau":
-                self.scheduler.step(valid_logs["valid_loss_field"])
+                self.scheduler.step(train_logs["loss_field"]) #valid_logs["valid_loss_field"])
 
             # Save model checkpoint
             if (self.params.world_rank == 0 and epoch % self.params.save_model_freq == 0 and self.params.save_checkpoint):
