@@ -108,7 +108,10 @@ class Trainer:
         else:
             self.scheduler = None
 
-        # Resuming option left out for now
+        # %% Resume train
+        if self.params.resuming:
+            print(f"Loading checkpoint from {self.params.best_checkpoint_path}")
+            self.restore_checkpoint(self.params.best_checkpoint_path)
         
         self.epoch = self.startEpoch
 
@@ -168,7 +171,8 @@ class Trainer:
         if self.params.log_to_screen and self.params.world_rank==0: #only print once
             print(f"Training...")
         self.epoch += 1
-        #no resuming code here yet
+        if self.params.resuming:
+            self.resumeEpoch += 1
         tr_time = 0
         data_time = 0
         steps_in_one_epoch = 0
@@ -368,7 +372,7 @@ class Trainer:
             self.model.load_state_dict(new_state_dict)
         self.iters = checkpoint["iters"]
         self.startEpoch = checkpoint["epoch"]
-        self.resumeEpoch = 0
+        self.resumeEpoch = 0 
         if self.params.resuming: # restore checkpoint is used for finetuning as well as resuming.
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             for g in self.optimizer.param_groups: # uses config specified lr
@@ -436,11 +440,12 @@ class Trainer:
                     print(f"Valid time={valid_time: .2f} seconds")
                     print(f"Valid loss={valid_logs['valid_loss_field']}")
 
-                # LR scheduler
-                # (2026-06-05) Does having this operate only on validated epochs cause issues? 
-                    # If only every 5th epoch is validated and patience = 20, does that mean 100 epochs to reduce LR when it should be 20? Test this later
-                if self.params.scheduler == "ReduceLROnPlateau":
-                    self.scheduler.step(valid_logs["valid_loss_field"])
+            # LR scheduler
+            # (2026-06-05) Does having this operate only on validated epochs cause issues? 
+                # If only every 5th epoch is validated and patience = 20, does that mean 100 epochs to reduce LR when it should be 20? Test this later
+            # (2026-06-11) Changing this to oeprate every epoch, not just per validation epoch
+            if self.params.scheduler == "ReduceLROnPlateau":
+                self.scheduler.step(valid_logs["valid_loss_field"])
 
             # Save model checkpoint
             if (self.params.world_rank == 0 and epoch % self.params.save_model_freq == 0 and self.params.save_checkpoint):
@@ -510,7 +515,7 @@ class Params:
         # --- Base variables from the original script ---
         self.target = "analysis_obs"
         self.lr_reduce_factor = 0.9
-        self.max_epochs = 12 #1200
+        self.max_epochs = 75 #1200
         self.world_size = -1
         self.world_rank = -1 #added 2026-06-03
         self.local_rank = -1
@@ -522,7 +527,7 @@ class Params:
         self.experiment_dir = f"/scratch3/BMC/wrfruc/aschein/ADAF_new/data/exp"
         self.checkpoint_path = f"/scratch3/BMC/wrfruc/aschein/ADAF_new/data/exp/training_checkpoints/ckpt.tar"
         self.best_checkpoint_path = f"/scratch3/BMC/wrfruc/aschein/ADAF_new/data/exp/training_checkpoints/best_ckpt.tar"
-        self.resuming = False
+        self.resuming = True #MAKE SURE THIS IS CORRECTLY SET!!
         self.name = None
         self.entity = "your entity"
         self.project = "your project"
@@ -536,7 +541,7 @@ class Params:
         self.optimizer_type = "Adam"
         self.scheduler = "ReduceLROnPlateau" #None
         self.scheduler_patience = 20 #added 2026-06-03
-        self.valid_frequency = 4
+        self.valid_frequency = 15
         self.save_model_freq = 1
         self.save_checkpoint = True
         self.target_vars = ['rtma_sp', 'rtma_q', 'rtma_t', 'rtma_u10', 'rtma_v10']

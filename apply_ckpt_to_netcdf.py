@@ -171,7 +171,7 @@ def plot_output_channel(results_dict, channel_name, cmap='bwr'):
 # Paths
 base_dir = "/scratch3/BMC/wrfruc/aschein/ADAF_new"
 data_dir = "/scratch5/BMC/ai-datadepot/projects/aschein/ADAF_new/data"
-ckpt_path = os.path.join(base_dir, "data/exp/training_checkpoints/ckpt.tar")
+ckpt_path = os.path.join(base_dir, "data/exp/training_checkpoints/best_ckpt.tar")
 stats_path = os.path.join(base_dir, "data_preparation_new/stats.csv")
 
 # Ensure model package is importable from notebook
@@ -262,7 +262,7 @@ pred_residual_unnorm = reverse_norm_from_stats(pred_residual_norm, params.field_
 target_residual_unnorm = reverse_norm_from_stats(target_residual_norm, params.field_tar_vars, stats_path)
 
 # Unnormalize HRRR background for residual reconstruction
-hrrr_unnorm = reverse_norm_from_stats(['inp_hrrr'].copy(), params.inp_hrrr_vars, stats_path)
+hrrr_unnorm = reverse_norm_from_stats(aux['inp_hrrr'].copy(), params.inp_hrrr_vars, stats_path)
 
 # If model learns residuals, reconstruct full analysis fields in physical units
 if params.learn_residual:
@@ -278,10 +278,7 @@ print("pred_analysis_unnorm shape:", pred_analysis_unnorm.shape)
 
 # %%
 # Channel mappings
-output_channel_names = [
-    f"output_{v.split('rtma_', 1)[1]}" if v.startswith('rtma_') else f"output_{v}"
-    for v in params.field_tar_vars
-]
+output_channel_names = [f"output_{v.split('rtma_', 1)[1]}" if v.startswith('rtma_') else f"output_{v}" for v in params.field_tar_vars]
 
 channel_maps = {
     'input_hrrr': {i: v for i, v in enumerate(params.inp_hrrr_vars)},
@@ -343,8 +340,7 @@ results = {
 
 # %%
 
-
-plot_output_channel(results, 'output_u10')
-
+plot_output_channel(results, 'output_t')
 
 
+# %%

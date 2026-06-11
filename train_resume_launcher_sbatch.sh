@@ -2,9 +2,9 @@
 #SBATCH --account gpu-ghpcs
 #SBATCH --qos=gpu
 #SBATCH --partition=u1-h100
-#SBATCH -J ADAF_test
-#SBATCH -o TEST_JOB_LOGS/ADAF_test_%J.out
-#SBATCH -e TEST_JOB_LOGS/ADAF_test_%J.err
+#SBATCH -J ADAF_resume
+#SBATCH -o TEST_JOB_LOGS/ADAF_resume_%J.out
+#SBATCH -e TEST_JOB_LOGS/ADAF_resume_%J.err
 
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1          # BACK TO: one launcher task per node
@@ -13,7 +13,7 @@
 #SBATCH --mem=0
 # NO --gpus-per-task - let all GPUs be visible to the launcher task
 
-#SBATCH -t 08:30:00 #01:30:00
+#SBATCH -t 5:30:00 #01:30:00
 #SBATCH --export=ALL
 
 echo "Starting job"
