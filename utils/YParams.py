@@ -30,6 +30,9 @@ class YParams:
 
     def __contains__(self, key):
         return key in self.params
+    
+    def items(self):
+        return self.params.items()
 
     def update_params(self, config):
         for key, val in config.items():
