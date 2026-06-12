@@ -1,13 +1,12 @@
 import argparse
 from ruamel.yaml import YAML
 
-
 class YParams:
-    """Yaml file parser"""
+    """Yaml file parser with native dot and bracket notation support"""
 
     def __init__(self, yaml_filename, config_name="EncDec", print_params=False):
         self._yaml_filename = yaml_filename
-        self._config_name = config_name #(2026-06-11) Currently only "EncDec" is supported, but leaving this functionality here in case it's ever useful
+        self._config_name = config_name
         self.params = {}
 
         with open(yaml_filename, "rb") as _file:
@@ -19,14 +18,27 @@ class YParams:
                     val = None
 
                 self.params[key] = val
-                self.__setattr__(key, val)
+
+    def __getattr__(self, key):
+        """Maps dot access to the internal dict"""
+        if "params" in self.__dict__ and key in self.params:
+            return self.params[key]
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'")
+
+    def __setattr__(self, key, val):
+        """Maps dot assignment to the internal dict"""
+        if key in ["_yaml_filename", "_config_name", "params"]:
+            super().__setattr__(key, val)
+        else:
+            self.params[key] = val
 
     def __getitem__(self, key):
+        """Maps bracket access"""
         return self.params[key]
 
     def __setitem__(self, key, val):
+        """Maps bracket assignment"""
         self.params[key] = val
-        self.__setattr__(key, val)
 
     def __contains__(self, key):
         return key in self.params
@@ -37,19 +49,14 @@ class YParams:
     def update_params(self, config):
         for key, val in config.items():
             self.params[key] = val
-            self.__setattr__(key, val)
 
     def override_from_cli(self, args):
         """
         Intercepts command-line arguments and overrides matching YAML parameters.
-        Ignored if the CLI argument is None or doesn't exist in the YAML.
         """
-        # Convert argparse Namespace to a standard dictionary if needed
         args_dict = vars(args) if isinstance(args, argparse.Namespace) else args
         
         for key, val in args_dict.items():
-            # Only override if the key exists in YAML and the user provided a value
             if key in self.params and val is not None:
                 self.params[key] = val
-                self.__setattr__(key, val)
 
