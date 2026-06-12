@@ -25,6 +25,7 @@ from ruamel.yaml.comments import CommentedMap as ruamelDict
 from utils.dataloader_multifiles import get_data_loader
 # from utils.logging_utils import log_to_file
 from utils.YParams import YParams
+from utils.misc_functions import set_user_params
 
 #################################
 
@@ -468,197 +469,26 @@ class Trainer:
 
 
 #######################################################
-##### TESTING #####
-#######################################################
 
-# class Params:
-#     def __init__(self):
-#         # --- Duplicate variables (retaining the OLD values) ---
-#         self.img_size_x = 1280 #960
-#         self.img_size_y = 500 #480 #512 
-
-#         # --- Unique variables from the new Dict ---
-#         self.upscale = 1
-#         self.in_chans = 21 #8
-#         self.out_chans = 5 #4
-#         self.window_size = 4
-#         self.patch_size = 5
-#         self.num_feat = 64
-#         self.drop_rate = 0.1
-#         self.drop_path_rate = 0.1
-#         self.attn_drop_rate = 0.1
-#         self.ape = False
-#         self.patch_norm = True
-#         self.use_checkpoint = False
-#         self.resi_connection = "1conv"
-#         self.qkv_bias = True
-#         self.qk_scale = None
-#         self.img_range = 1.0
-#         self.depths = [3]
-#         self.embed_dim = 64
-#         self.num_heads = [4]
-#         self.mlp_ratio = 2
-
-#         # --- Unique variables from the intermediate class ---
-#         self.batch_size = 13
-#         self.num_data_workers = 4
-#         self.n_in_channels = 17
-#         self.n_out_channels = 5
-#         self.inp_hrrr_vars = ['hrrr_sp', 'hrrr_q', 'hrrr_t', 'hrrr_u10', 'hrrr_v10']
-#         self.inp_obs_vars = ["sta_p", "sta_q", "sta_t", "sta_u10", "sta_v10"]
-#         self.field_tar_vars = ['rtma_sp', 'rtma_q', 'rtma_t', 'rtma_u10', 'rtma_v10']
-#         self.obs_time_window = 3
-#         self.hold_out_obs = True
-#         self.hold_out_obs_ratio = 0.1
-#         self.obs_mask_seed = 0
-#         self.learn_residual = True
-
-#         # --- Base variables from the original script ---
-#         self.target = "analysis_obs"
-#         self.lr_reduce_factor = 0.9
-#         self.max_epochs = 75 #1200
-#         self.world_size = -1
-#         self.world_rank = -1 #added 2026-06-03
-#         self.local_rank = -1
-#         self.lr = 0.0002
-#         # self.nettype = "EncDec"
-#         self.device = "GPU"
-#         self.global_batch_size = 8
-#         self.enable_amp = True
-#         self.experiment_dir = f"/scratch3/BMC/wrfruc/aschein/ADAF_new/data/exp"
-#         self.checkpoint_path = f"/scratch3/BMC/wrfruc/aschein/ADAF_new/data/exp/training_checkpoints/ckpt.tar"
-#         self.best_checkpoint_path = f"/scratch3/BMC/wrfruc/aschein/ADAF_new/data/exp/training_checkpoints/best_ckpt.tar"
-#         self.resuming = True #MAKE SURE THIS IS CORRECTLY SET!!
-#         self.name = None
-#         self.entity = "your entity"
-#         self.project = "your project"
-#         self.group = None
-#         self.log_to_wandb = False
-#         self.log_to_screen = True
-
-#         # --- YParams / YAML configuration defaults ---
-#         self.train_data_path = f"/scratch5/BMC/ai-datadepot/projects/aschein/ADAF_new/data/train_data/"
-#         self.valid_data_path = f"/scratch5/BMC/ai-datadepot/projects/aschein/ADAF_new/data/valid_data/"
-#         self.optimizer_type = "Adam"
-#         self.scheduler = "ReduceLROnPlateau" #None
-#         self.scheduler_patience = 20 #added 2026-06-03
-#         self.valid_frequency = 15
-#         self.save_model_freq = 1
-#         self.save_checkpoint = True
-#         self.target_vars = ['rtma_sp', 'rtma_q', 'rtma_t', 'rtma_u10', 'rtma_v10']
-
-#     def __getitem__(self, key):
-#         return getattr(self, key)
-
-#     def __setitem__(self, key, value):
-#         setattr(self, key, value)
-
-#     @property
-#     def params(self):
-#         return self.__dict__
-
-#     def log(self):
-#         for key, value in sorted(self.__dict__.items()):
-#             print(f"{key}: {value}")
 
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
+    parser.add_argument('--config_filepath', type=str, default="./config/params_default.yaml") #This should be changed per-run if modifying many params! If only modifying a few, passing in args on the command line should suffice
 
-    ## Probably want to functionalize this...
-
-    # TRAINING PARAMETERS
-    parser.add_argument('--max_epochs', type=int, default=None)
-    parser.add_argument('--batch_size', type=int, default=None)
-    parser.add_argument('--num_data_workers', type=int, default=None)
-    parser.add_argument('--optimizer_type', type=str, default=None)
-    parser.add_argument('--scheduler', type=str, default=None)
-    parser.add_argument('--scheduler_patience', type=int, default=None)
-    parser.add_argument('--lr_reduce_factor', type=float, default=None)
-    parser.add_argument('--lr', type=float, default=None)
-    parser.add_argument('--local_rank', type=int, default=None)
-    parser.add_argument('--world_rank', type=int, default=None)
-
-    # DATA PATHS AND SPECIFICATIONS
-    parser.add_argument('--data_path', type=str, default=None)
-    parser.add_argument('--train_data_path', type=str, default=None)
-    parser.add_argument('--valid_data_path', type=str, default=None)
-    parser.add_argument('--test_data_path', type=str, default=None)
-    parser.add_argument('--inp_hrrr_vars', type=str, nargs='+', default=None)
-    parser.add_argument('--inp_obs_vars', type=str, nargs='+', default=None)
-    parser.add_argument('--field_tar_vars', type=str, nargs='+', default=None)
-    parser.add_argument('--target_vars', type=str, nargs='+', default=None)
-    parser.add_argument('--obs_time_window', type=int, default=None)
-
-    # MODEL ARCHITECTURE
-    parser.add_argument('--upscale', type=int, default=None)
-    parser.add_argument('--in_chans', type=int, default=None)
-    parser.add_argument('--out_chans', type=int, default=None)
-    parser.add_argument('--img_size_x', type=int, default=None)
-    parser.add_argument('--img_size_y', type=int, default=None)
-    parser.add_argument('--window_size', type=int, default=None)
-    parser.add_argument('--patch_size', type=int, default=None)
-    parser.add_argument('--num_feat', type=int, default=None)
-    parser.add_argument('--drop_rate', type=float, default=None)
-    parser.add_argument('--drop_path_rate', type=float, default=None)
-    parser.add_argument('--attn_drop_rate', type=float, default=None)
-    parser.add_argument('--ape', type=str, default=None)
-    parser.add_argument('--patch_norm', type=str, default=None)
-    parser.add_argument('--use_checkpoint', type=str, default=None)
-    parser.add_argument('--resi_connection', type=str, default=None)
-    parser.add_argument('--qkv_bias', type=str, default=None)
-    parser.add_argument('--qk_scale', type=float, default=None)
-    parser.add_argument('--img_range', type=float, default=None)
-    parser.add_argument('--depths', type=int, nargs='+', default=None)
-    parser.add_argument('--embed_dim', type=int, default=None)
-    parser.add_argument('--num_heads', type=int, nargs='+', default=None)
-    parser.add_argument('--mlp_ratio', type=int, default=None)
-    parser.add_argument('--upsampler', type=str, default=None)
-
-    # TRAINING SPECIFICS
-    parser.add_argument('--target', type=str, default=None)
-    parser.add_argument('--hold_out_obs', type=str, default=None)
-    parser.add_argument('--hold_out_obs_ratio', type=float, default=None)
-    parser.add_argument('--learn_residual', type=str, default=None)
-    parser.add_argument('--obs_mask_seed', type=int, default=None)
-    parser.add_argument('--seed', type=int, default=None)
-    parser.add_argument('--resuming', type=str, default=None)
-    parser.add_argument('--enable_amp', type=str, default=None)
-    parser.add_argument('--log_to_screen', type=str, default=None)
-
-    # CHECKPOINTING AND SAVING
-    parser.add_argument('--save_checkpoint', type=str, default=None)
-    parser.add_argument('--save_model_freq', type=int, default=None)
-    parser.add_argument('--valid_frequency', type=int, default=None)
-
-    # CHECKPOINT AND DIRECTORY MANAGEMENT
-    parser.add_argument('--experiment_dir', type=str, default=None)
-    parser.add_argument('--checkpoint_path', type=str, default=None)
-    parser.add_argument('--best_checkpoint_path', type=str, default=None)
-
-    args = parser.parse_args()
-    
-    params = YParams("params_exp.yaml", print_params=True)
+    args = set_user_params(parser)
+   
+    params = YParams(args.config_filepath, print_params=True)
     params.override_from_cli(args)
-
-    # Keep DataLoader workers proportional to CPU allocation per rank.
-    # local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", 1))
-    # slurm_cpus_per_task = int(os.environ.get("SLURM_CPUS_PER_TASK", "4"))
-    # workers_per_rank_cap = max(1, slurm_cpus_per_task // max(local_world_size, 1) - 1)
-    # params.num_data_workers = min(int(params.num_data_workers), workers_per_rank_cap) #4 #6 
-    # print(
-    #     f"SLURM_CPUS_PER_TASK={slurm_cpus_per_task}, LOCAL_WORLD_SIZE={local_world_size}, "
-    #     f"num_data_workers={params.num_data_workers}"
-    # )
     
     # Get SLURM info for DDP and set params
-    params.world_size = int(os.environ.get("WORLD_SIZE")) 
-    params.local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    # params["world_size"] = int(os.environ.get("WORLD_SIZE")) #Not currently used
+    params["local_rank"] = int(os.environ.get("LOCAL_RANK", 0))
 
     dist.init_process_group(backend="nccl")
-    params.world_rank = dist.get_rank() 
+    params["world_rank"] = dist.get_rank() 
 
     trainer = Trainer(params)
-    trainer.train()
+    # trainer.train()
 
     dist.destroy_process_group()

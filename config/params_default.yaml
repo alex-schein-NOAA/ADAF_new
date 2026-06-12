@@ -1,6 +1,5 @@
 # Comprehensive ADAF parameter configuration
 # Consolidates all parameters from train.py and inference.py
-# No default values; set all parameters manually
 
 # Base configuration - used to select this config section
 base_config: &BASE_CONFIG
