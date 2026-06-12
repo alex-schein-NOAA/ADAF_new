@@ -41,8 +41,8 @@ class GetDataset(Dataset):
         self.params = params
         self.train = train
         self.files_location = files_location
-        self.n_in_channels = params.n_in_channels
-        self.n_out_channels = params.n_out_channels
+        # self.n_in_channels = params.n_in_channels
+        # self.n_out_channels = params.n_out_channels
         # self.add_noise = params.add_noise if train else false
         self.get_file_stats()
 
