@@ -8,7 +8,7 @@ def set_user_params(parser):
     Designed to be called before the YParams object is instantiated in the main code; any arguments inputted here will override those config file parameters
     
     Input: instantiated argparse.ArgumentParser() object
-    Output: 
+    Output: args to be used for YParams call
     """
     # TRAINING PARAMETERS
     parser.add_argument('--max_epochs', type=int, default=None)
