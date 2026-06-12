@@ -478,9 +478,9 @@ if __name__ == "__main__":
 
     args = set_user_params(parser)
    
-    params = YParams(args.config_filepath, print_params=True)
+    params = YParams(args.config_filepath)
     params.override_from_cli(args)
-    
+
     # Get SLURM info for DDP and set params
     # params["world_size"] = int(os.environ.get("WORLD_SIZE")) #Not currently used
     params["local_rank"] = int(os.environ.get("LOCAL_RANK", 0))
@@ -488,7 +488,13 @@ if __name__ == "__main__":
     dist.init_process_group(backend="nccl")
     params["world_rank"] = dist.get_rank() 
 
+    if params.log_to_screen and params.world_rank == 0:
+        print("------ PARAMETER VALUES ------")
+        for key, val in params.items():
+            print(f"{key}: {val}")
+        print("------------------------------")
+
     trainer = Trainer(params)
-    # trainer.train()
+    trainer.train()
 
     dist.destroy_process_group()

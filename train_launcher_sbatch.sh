@@ -13,7 +13,7 @@
 #SBATCH --mem=0
 # NO --gpus-per-task - let all GPUs be visible to the launcher task
 
-#SBATCH -t 08:30:00 #01:30:00
+#SBATCH -t 00:30:00 #01:30:00
 #SBATCH --export=ALL
 
 echo "Starting job"
@@ -81,7 +81,11 @@ srun --ntasks-per-node=1 --mpi=none \
     --rdzv_backend="${RDZV_BACKEND}" \
     --rdzv_endpoint="${RDZV_ENDPOINT}" \
     --rdzv_id="${RDZV_ID}" \
-     /scratch3/BMC/wrfruc/aschein/ADAF_new/train.py
+     /scratch3/BMC/wrfruc/aschein/ADAF_new/train.py \
+     --config_filepath "./config/params_default.yaml" \
+     --max_epochs 3 \
+     --checkpoint_path "/scratch3/BMC/wrfruc/aschein/ADAF_new/data/exp/training_checkpoints/ckpt_TEST.tar" \
+     --best_checkpoint_path "/scratch3/BMC/wrfruc/aschein/ADAF_new/data/exp/training_checkpoints/best_ckpt_TEST.tar"
 
 stopTime=$(date +%s)
 echo "runTime=$((stopTime-startTime))"
