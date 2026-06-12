@@ -1,4 +1,5 @@
 import argparse
+from collections.abc import Mapping
 
 #########################
 
@@ -78,3 +79,30 @@ def set_user_params(parser):
     args = parser.parse_args()
 
     return args
+
+####
+
+def to_builtin(value):
+    """Convert ruamel container/scalar types into plain Python builtins."""
+    if isinstance(value, Mapping):
+        return {k: to_builtin(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [to_builtin(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(to_builtin(v) for v in value)
+
+    # Preserve exact builtin scalar types
+    if type(value) in (bool, int, float, str) or value is None:
+        return value
+
+    # Coerce scalar subclasses to builtins (can cause issues with saved checkpoints if not sanitized)
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return float(value)
+    if isinstance(value, str):
+        return str(value)
+
+    return value

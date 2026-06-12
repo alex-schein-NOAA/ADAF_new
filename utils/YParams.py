@@ -1,5 +1,8 @@
 import argparse
 from ruamel.yaml import YAML
+from misc_functions import to_builtin
+
+
 
 class YParams:
     """Yaml file parser with native dot and bracket notation support"""
@@ -16,6 +19,8 @@ class YParams:
                     print(key, val)
                 if val == "None":
                     val = None
+                else:
+                    val = to_builtin(val) #sanitize inputs so they don't cause pickling issues with saved checkpoints
 
                 self.params[key] = val
 
@@ -42,6 +47,7 @@ class YParams:
 
     def __contains__(self, key):
         return key in self.params
+    
     
     def items(self):
         return self.params.items()
