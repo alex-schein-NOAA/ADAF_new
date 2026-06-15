@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+
+# Core dumps
+core.*
+
+# Slurm / job logs
+slurm-*.out
+TEST_JOB_LOGS/
+*.console.log
+
+# Generated xESMF regridder weights
+data_preparation_new/regridder_*.nc
+
+# IODA HPSS pull / convert intermediates & outputs (data, not code)
+data_preparation_new/ioda_msonet/run_*/
+data_preparation_new/ioda_msonet/_hpss_stage/
+data_preparation_new/ioda_msonet/logs/
+
+# Generated ADAF training/eyeball samples
+data_preparation_new/step_b_eyeball/

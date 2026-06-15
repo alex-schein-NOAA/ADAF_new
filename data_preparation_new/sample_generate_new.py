@@ -34,12 +34,18 @@ parser = argparse.ArgumentParser(description="")
 parser.add_argument("--starting_analysis_time", type=str) #Must be formatted as "YYYY-MM-DD_HH"
 parser.add_argument("--ending_analysis_time", type=str) #Must be formatted as "YYYY-MM-DD_HH"
 parser.add_argument("--save_directory", type=str, default=None)
+parser.add_argument("--obs_source", type=str, default="metar", choices=["metar", "ioda"],
+                    help="Station obs source: 'metar' (nnja-ai METAR, default) or 'ioda' (our prepBUFR->IODA mesonet).")
+parser.add_argument("--ioda_root", type=str, default=IODA_ROOT,
+                    help="Root dir holding per-cycle IODA files (<ioda_root>/run_<YYYYMMDDHH>/ioda_msonet.nc). Only used when --obs_source=ioda.")
 
 
 args = parser.parse_args()
 starting_analysis_time = dt.datetime.strptime(args.starting_analysis_time, "%Y-%m-%d_%H")
 ending_analysis_time = dt.datetime.strptime(args.ending_analysis_time, "%Y-%m-%d_%H")
 save_directory = args.save_directory
+obs_source = args.obs_source
+ioda_root = args.ioda_root
 
 if save_directory is None:
    sys.exit("ERROR: --save_directory must be specifed!")
@@ -76,8 +82,9 @@ time_period = 14 #days
 catalog_str = 'conv-adpsfc-NC000007'
 list_of_metar_vars = ["LAT","LON", "OBS_TIMESTAMP", "MTRTMP.TMDB", "MTRTMP.TMDP", "MTRPRS.ALSE", "MTRWND.WSPD", "MTRWND.WDIR"]
 
-#Initialize outside the main loop
-df_master = get_nnja_metar_dataframe(analysis_times_list[0], list_of_metar_vars, time_period=time_period, catalog_str=catalog_str)
+#Initialize outside the main loop (METAR only; the IODA path reads per-cycle files inside the loop)
+if obs_source == "metar":
+    df_master = get_nnja_metar_dataframe(analysis_times_list[0], list_of_metar_vars, time_period=time_period, catalog_str=catalog_str)
 
 written_count = 0
 already_exists_count = 0
@@ -151,15 +158,29 @@ for t, analysis_time in enumerate(analysis_times_list):
             )
     
         ### Station obs
-        df_master = check_nnja_metar_dataframe(df_master, analysis_time, list_of_metar_vars)
-        missing_obs_hours = get_missing_obs_hours(df_master, analysis_time, obs_time_window=obs_time_window)
-        if len(missing_obs_hours) > 0:
-            missing_str = ", ".join([x.strftime("%Y-%m-%d %H:%M") for x in missing_obs_hours])
-            print(f"Skipping {output_filename}: missing required obs hour(s) for station window -> {missing_str}")
-            skipped_missing_obs_count += 1
-            continue
+        if obs_source == "ioda":
+            # Each IODA file is one cycle (hour); a sample needs the cycles covering
+            # required hours [t-(window-1) .. t]. Skip if any of those files is absent.
+            required_cycles = [analysis_time - dt.timedelta(hours=h) for h in range(obs_time_window - 1, -1, -1)]
+            missing_cycles = [c for c in required_cycles if not os.path.exists(ioda_cycle_path(c, ioda_root))]
+            if len(missing_cycles) > 0:
+                missing_str = ", ".join([c.strftime("%Y-%m-%d %H") for c in missing_cycles])
+                print(f"Skipping {output_filename}: missing required IODA cycle file(s) -> {missing_str}")
+                skipped_missing_obs_count += 1
+                continue
+            df_master = get_ioda_mesonet_dataframe(analysis_time, obs_time_window=obs_time_window, ioda_root=ioda_root)
+            df = assemble_complete_ioda_df(df_master, analysis_time, obs_time_window, df_adaf_lats_lons)
+        else:
+            df_master = check_nnja_metar_dataframe(df_master, analysis_time, list_of_metar_vars)
+            missing_obs_hours = get_missing_obs_hours(df_master, analysis_time, obs_time_window=obs_time_window)
+            if len(missing_obs_hours) > 0:
+                missing_str = ", ".join([x.strftime("%Y-%m-%d %H:%M") for x in missing_obs_hours])
+                print(f"Skipping {output_filename}: missing required obs hour(s) for station window -> {missing_str}")
+                skipped_missing_obs_count += 1
+                continue
 
-        df = assemble_complete_metar_df(df_master, analysis_time, obs_time_window, df_adaf_lats_lons)
+            df = assemble_complete_metar_df(df_master, analysis_time, obs_time_window, df_adaf_lats_lons)
+
         if df.empty:
             print(f"Skipping {output_filename}: no valid station observations remained after filtering/QC.")
             skipped_empty_sta_count += 1
