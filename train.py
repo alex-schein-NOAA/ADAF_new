@@ -28,6 +28,7 @@ from utils.YParams import YParams
 from utils.misc_functions import set_user_params
 
 #################################
+###
 
 def set_random_seed(seed):
     random.seed(seed)
@@ -457,7 +458,7 @@ class Trainer:
             # !! This will wipe out the previous best model !! Needs modification for that case
             if (self.params.world_rank == 0 and self.params.save_checkpoint):
                 if train_logs["loss_field"] <= best_train_loss:
-                    print(f"Loss improved from {best_train_loss} to {train_logs["loss_field"]}")
+                    print(f"Loss improved from {best_train_loss} to {train_logs['loss_field']}")
                     best_train_loss = train_logs["loss_field"]
                     self.save_checkpoint(self.params.best_checkpoint_path)
         
