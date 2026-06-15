@@ -8,6 +8,7 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 import xarray as xr
+import h5py
 
 # Geospatial & Analysis
 import xesmf
@@ -585,6 +586,383 @@ def create_obs_xarray(df_obs, df_coords, analysis_time, time_col='OBS_TIMESTAMP'
     )
     
     return ds_final
+
+###################
+
+###############################################################
+#################### MESONET (MADIS) FUNCTIONS ################
+###############################################################
+#
+# Mesonet station obs come from local MADIS LDAD/mesonet netCDF files
+# (/public/data/madis/LDAD/mesonet/netCDF/), NOT from nnja_ai. Each hourly file
+# is named YYYYMMDD_HH00 and holds every ob from HH:00 through HH:59, one per
+# `recNum`. Native units: temperature/dewpoint in K, stationPressure in Pa,
+# windSpeed in m/s, windDir in degrees (matching the existing METAR assumptions).
+#
+# These three functions mirror the METAR path (get_ / select_and_clean_ /
+# assemble_) but read netCDF directly instead of pulling from nnja_ai.
+# Everything downstream of assemble_complete_*_df -- grid-snapping
+# (assign_closest_with_threshold), temporal de-duplication and completeness,
+# wind->uv, specific humidity, bounds QC, normalization, and create_obs_xarray --
+# is source-agnostic and reused unchanged.
+
+MESONET_DIR = "/public/data/madis/LDAD/mesonet/netCDF"
+
+# MADIS QC summary ("DD") codes we accept. V=passed all levels, S=passed
+# screening (levels 1-2), C=passed coarse (level 1), G=subjectively good.
+# Rejected: Z (no QC performed), Q (questionable), X (failed), B (subjectively
+# bad). This accepted-set is the primary Stage-3 QC knob -- loosen/tighten here.
+MESONET_QC_GOOD_FLAGS = {"V", "S", "C", "G"}
+
+# Observed value -> its MADIS QC-summary companion variable.
+MESONET_VALUE_QC_MAP = {
+    "temperature":     "temperatureDD",
+    "dewpoint":        "dewpointDD",
+    "stationPressure": "stationPressureDD",
+    "windSpeed":       "windSpeedDD",
+    "windDir":         "windDirDD",
+}
+
+# Variables pulled out of each (600+ MB, 200+ variable) netCDF file.
+MESONET_LOAD_VARS = ["latitude", "longitude", "observationTime"] \
+    + list(MESONET_VALUE_QC_MAP.keys()) + list(MESONET_VALUE_QC_MAP.values())
+
+# Slim columns returned by the loader (native units, post-QC-masking).
+MESONET_SLIM_COLS = ["lat", "lon", "OBS_TIMESTAMP"] + list(MESONET_VALUE_QC_MAP.keys())
+
+# Per-file cache so adjacent analysis hours don't re-read the same 600+ MB file.
+_MESONET_FILE_CACHE = {}
+_MESONET_CACHE_ORDER = []
+_MESONET_CACHE_MAXFILES = 6
+
+
+def _decode_bytes_series(series):
+    """Decode a pandas Series of (possibly byte-string) values to stripped str."""
+    return series.apply(
+        lambda v: v.decode("ascii", "ignore") if isinstance(v, (bytes, bytearray))
+        else ("" if v is None else str(v))
+    ).str.strip()
+
+
+def _load_mesonet_file(filepath, qc_good_flags=MESONET_QC_GOOD_FLAGS):
+    """
+    Reads one MADIS mesonet netCDF file into a slim DataFrame with columns
+    MESONET_SLIM_COLS in native units. Observed values whose MADIS QC summary
+    (DD) flag is not in qc_good_flags are set to NaN (so they are dropped later
+    by the drop_nans step, exactly like a missing ob). Results are cached by
+    filepath. Returns an empty (correctly-columned) DataFrame if the file is
+    absent -- the live feed only retains ~5 days, so older hours will be missing.
+    """
+    if filepath in _MESONET_FILE_CACHE:
+        return _MESONET_FILE_CACHE[filepath]
+
+    if not os.path.exists(filepath):
+        return pd.DataFrame(columns=MESONET_SLIM_COLS)
+
+    # decode_times=False: observationTime has multiple fill values and we convert
+    # it by hand below. mask_and_scale (default) still turns float _FillValues
+    # (-9999, 3.4e38) into NaN for lat/lon/temperature/etc.
+    ds = xr.open_dataset(filepath, decode_times=False)[MESONET_LOAD_VARS].load()
+    df = ds.to_dataframe().reset_index(drop=True)
+    ds.close()
+
+    # Mask each observed value to NaN where its QC summary flag is not accepted.
+    for val_col, dd_col in MESONET_VALUE_QC_MAP.items():
+        dd = _decode_bytes_series(df[dd_col])
+        df.loc[~dd.isin(qc_good_flags), val_col] = np.nan
+
+    df["OBS_TIMESTAMP"] = pd.to_datetime(df["observationTime"], unit="s", errors="coerce")
+    df = df.rename(columns={"latitude": "lat", "longitude": "lon"})
+    df = df[MESONET_SLIM_COLS]
+
+    _MESONET_FILE_CACHE[filepath] = df
+    _MESONET_CACHE_ORDER.append(filepath)
+    if len(_MESONET_CACHE_ORDER) > _MESONET_CACHE_MAXFILES:
+        _MESONET_FILE_CACHE.pop(_MESONET_CACHE_ORDER.pop(0), None)
+    return df
+
+###################
+
+def get_madis_mesonet_dataframe(analysis_time, obs_time_window=3,
+                                mesonet_dir=MESONET_DIR,
+                                qc_good_flags=MESONET_QC_GOOD_FLAGS):
+    """
+    Mesonet analogue of get_nnja_metar_dataframe. Loads MADIS mesonet obs
+    covering (analysis_time - obs_time_window, analysis_time] by reading the
+    relevant hourly files and concatenating them. Returns a slim DataFrame with
+    MESONET_SLIM_COLS columns in native units.
+
+    Hourly files are named YYYYMMDD_HH00 and contain obs from HH:00..HH:59, so we
+    read hours [t-window, t]: the lower files cover the window and file `t`
+    contributes only the top-of-hour ob (later filtered/deduplicated downstream).
+    """
+    hours = [analysis_time - dt.timedelta(hours=h) for h in range(obs_time_window, -1, -1)]
+    frames = [
+        _load_mesonet_file(f"{mesonet_dir}/{h.strftime('%Y%m%d')}_{h.strftime('%H')}00",
+                           qc_good_flags=qc_good_flags)
+        for h in hours
+    ]
+    return pd.concat(frames, ignore_index=True)
+
+###################
+
+def select_and_clean_mesonet_obs(df_master, analysis_time, obs_time_window,
+                                 drop_nans=True, convert_units=True, rename_data_vars=True):
+    """
+    Mesonet analogue of select_and_clean_metar_obs. Subselects df_master to the
+    obs window, drops incomplete rows, converts units, and renames the two
+    direct-value columns.
+
+    - drop_nans (default True): drop rows where any required ob (or its QC-masked
+      value) is NaN. With stationPressure required this enforces the same
+      "all five channels present" contract as the METAR path.
+    - convert_units (default True): stationPressure Pa->hPa, temperature K->C.
+      (dewpoint stays in K -- add_specific_humidity expects Kelvin.)
+    - rename_data_vars (default True): temperature->sta_t, stationPressure->sta_p.
+      dewpoint / windSpeed / windDir are renamed later by add_specific_humidity
+      and convert_wind_to_uv. lat/lon are already named by the loader.
+    """
+    time_sel_str_start = (analysis_time - dt.timedelta(hours=obs_time_window) + dt.timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
+    time_sel_str_end = analysis_time.strftime("%Y-%m-%d %H:%M:%S")
+
+    df = df_master[df_master['OBS_TIMESTAMP'].between(time_sel_str_start, time_sel_str_end)].copy()
+
+    if drop_nans:
+        df = df.dropna()
+    if convert_units:
+        df["stationPressure"] = df["stationPressure"] * 0.01   # Pa -> hPa
+        df["temperature"] = df["temperature"] - 273.15         # K -> C
+    if rename_data_vars:
+        df = df.rename(columns={"temperature": "sta_t", "stationPressure": "sta_p"})
+
+    return df
+
+###################
+
+def assemble_complete_mesonet_df(df_master, analysis_time, obs_time_window, df_adaf_lats_lons,
+                                 adaf_lat_min=24.675, adaf_lat_max=50.275,
+                                 adaf_lon_min=231.975, adaf_lon_max=295.975,
+                                 threshold_mins=30, max_dist_km=10):
+    """
+    Mesonet analogue of assemble_complete_metar_df. Produces a DataFrame with the
+    identical final contract -- columns [lat, lon, OBS_TIMESTAMP, sta_t, sta_p,
+    sta_q, sta_u10, sta_v10] -- ready for min_max_norm_ignore_extreme_fill_nan_sta_df
+    and create_obs_xarray. All steps after the source-specific clean reuse the
+    shared (column-parameterized) helpers.
+    """
+    df = select_and_clean_mesonet_obs(df_master, analysis_time, obs_time_window,
+                                      drop_nans=True, convert_units=True, rename_data_vars=True)
+    df = assign_closest_with_threshold(df, df_adaf_lats_lons,
+                                       lat_min=adaf_lat_min, lat_max=adaf_lat_max,
+                                       lon_min=adaf_lon_min, lon_max=adaf_lon_max,
+                                       max_dist_km=max_dist_km)
+    df = keep_closest_to_hour_per_location_with_time_threshold(df, threshold_mins=threshold_mins, past_obs_only=True)
+    df['OBS_TIMESTAMP'] = df['OBS_TIMESTAMP'].dt.ceil('h')
+    df = filter_obs_by_temporal_completeness(df, obs_time_window=obs_time_window)
+    df = convert_wind_to_uv(df, speed_col='windSpeed', dir_col='windDir')
+    df = add_specific_humidity(df, dewpoint_col='dewpoint', pressure_col='sta_p')
+    df = reject_out_of_bounds_obs(df)
+
+    return df
+
+###################
+
+
+###############################################################
+#################### IODA MESONET FUNCTIONS ###################
+###############################################################
+#
+# IODA mesonet obs come from OUR OWN prepBUFR->IODA workflow (bufr2ioda.x, MSONET
+# subset) -- the mentor-directed source -- NOT from nnja_ai or the MADIS LDAD
+# feed. Each cycle produces ONE HDF5/netCDF "IODA" file covering a 1-hour window
+# (cycle HH:00 +/- 30 min). File layout matches the bufr2ioda runner output:
+#   <IODA_ROOT>/run_<YYYYMMDDHH>/ioda_msonet.nc
+# (the future HPSS loop calls that same runner per cycle, so files land here too).
+#
+# IODA file format (h5py groups; read via h5py):
+#   ObsValue/{airTemperature[K], specificHumidity[kg/kg], stationPressure[Pa],
+#             windEastward[m/s], windNorthward[m/s]} -- these five map 1:1 to the
+#             ADAF channels and are already DA-ready: q is precomputed and u/v are
+#             already split, so (unlike METAR/MADIS) NO dewpoint->q or
+#             windspeed/dir->u/v derivation is needed.
+#   QualityMarker/<var> (int): keep {0,1,2,3} (prepBUFR good/neutral; 8-15 reject).
+#   MetaData/{latitude, longitude[0-360], dateTime[int64 s since 1970-01-01],
+#             stationIdentification, prepbufrReportType}.
+#   Float fill = 3.4e38 (masked via |x| >= 1e30).
+#
+# KEY IODA-SPECIFIC STEP: prepBUFR splits each physical station into a MASS report
+# (report type 188/195 -> T,q,p) and a WIND report (288/295 -> u,v) at the same
+# instant and location. _load_ioda_file MERGES them per (station, dateTime) so a
+# row carries every channel the station reported -- otherwise every row would have
+# NaNs and the drop_nans step would discard all of them.
+#
+# Everything downstream of assemble_complete_ioda_df -- grid-snapping
+# (assign_closest_with_threshold), temporal de-dup/completeness, bounds QC,
+# normalization (min_max_norm_ignore_extreme_fill_nan_sta_df), and create_obs_xarray
+# -- is the SAME source-agnostic machinery the METAR and MADIS paths use, reused
+# unchanged. The 0.05deg ADAF grid is supplied by the caller (df_adaf_lats_lons).
+
+IODA_ROOT = "/scratch3/BMC/wrfruc/Micah.Craine/ADAF_new/data_preparation_new/ioda_msonet"
+
+# IODA ObsValue variables in native units (K, kg/kg, Pa, m/s, m/s). These five
+# map directly onto the ADAF sta_t / sta_q / sta_p / sta_u10 / sta_v10 channels.
+IODA_VALUE_VARS = ["airTemperature", "specificHumidity", "stationPressure",
+                   "windEastward", "windNorthward"]
+
+# prepBUFR QualityMarker values accepted (good/neutral). >=4 progressively worse;
+# 8-15 are rejected/missing. This accepted-set is the primary IODA QC knob.
+IODA_QC_GOOD_FLAGS = {0, 1, 2, 3}
+
+IODA_FILL_ABS = 1e30   # IODA float fill is 3.4e38; mask anything with |x| >= 1e30.
+
+# Slim columns returned by the loader (native units, post QC-masking + mass/wind merge).
+IODA_SLIM_COLS = ["lat", "lon", "OBS_TIMESTAMP"] + IODA_VALUE_VARS
+
+# Per-file cache so adjacent analysis hours don't re-read the same IODA file.
+_IODA_FILE_CACHE = {}
+_IODA_CACHE_ORDER = []
+_IODA_CACHE_MAXFILES = 6
+
+
+def ioda_cycle_path(cycle_time, ioda_root=IODA_ROOT):
+    """Path to the IODA file for a given cycle hour, matching the bufr2ioda runner
+    layout: <ioda_root>/run_<YYYYMMDDHH>/ioda_msonet.nc."""
+    return f"{ioda_root}/run_{cycle_time.strftime('%Y%m%d%H')}/ioda_msonet.nc"
+
+
+def _load_ioda_file(filepath, qc_good_flags=IODA_QC_GOOD_FLAGS):
+    """
+    Reads one IODA mesonet file into a slim DataFrame with columns IODA_SLIM_COLS
+    in native units (K, kg/kg, Pa, m/s). Fill values and obs whose QualityMarker
+    is not in qc_good_flags are set to NaN. prepBUFR mass (T/q/p) and wind (u/v)
+    rows for the same station+instant are MERGED into one row via
+    groupby(...).first() -- which returns the first NON-NULL value, so the two
+    half-reports combine into a single fully-populated row (lat/lon are constant
+    within the group). Cached by filepath. Returns an empty (correctly-columned)
+    DataFrame if the file is absent (e.g. a cycle not yet pulled from HPSS).
+    """
+    if filepath in _IODA_FILE_CACHE:
+        return _IODA_FILE_CACHE[filepath]
+
+    if not os.path.exists(filepath):
+        return pd.DataFrame(columns=IODA_SLIM_COLS)
+
+    with h5py.File(filepath, "r") as f:
+        data = {
+            "lat": f["MetaData/latitude"][:].astype("float64"),
+            "lon": f["MetaData/longitude"][:].astype("float64"),
+            "sid": _decode_bytes_series(pd.Series(f["MetaData/stationIdentification"][:])).to_numpy(),
+            "OBS_TIMESTAMP": pd.to_datetime(f["MetaData/dateTime"][:], unit="s"),
+        }
+        for v in IODA_VALUE_VARS:
+            val = f[f"ObsValue/{v}"][:].astype("float64")
+            val[np.abs(val) >= IODA_FILL_ABS] = np.nan          # mask fill
+            qk = f"QualityMarker/{v}"
+            if qk in f:
+                qm = f[qk][:]
+                val[~np.isin(qm, list(qc_good_flags))] = np.nan  # mask bad QC
+            data[v] = val
+    df = pd.DataFrame(data)
+
+    # Merge the split mass/wind reports per station+instant into a single row.
+    agg = {"lat": "first", "lon": "first"}
+    agg.update({v: "first" for v in IODA_VALUE_VARS})
+    df = df.groupby(["sid", "OBS_TIMESTAMP"], as_index=False).agg(agg)
+    df = df[IODA_SLIM_COLS]
+
+    _IODA_FILE_CACHE[filepath] = df
+    _IODA_CACHE_ORDER.append(filepath)
+    if len(_IODA_CACHE_ORDER) > _IODA_CACHE_MAXFILES:
+        _IODA_FILE_CACHE.pop(_IODA_CACHE_ORDER.pop(0), None)
+    return df
+
+###################
+
+def get_ioda_mesonet_dataframe(analysis_time, obs_time_window=3, ioda_root=IODA_ROOT,
+                               qc_good_flags=IODA_QC_GOOD_FLAGS):
+    """
+    IODA analogue of get_madis_mesonet_dataframe. Reads the per-cycle IODA files
+    covering (analysis_time - obs_time_window, analysis_time] and concatenates them
+    into a slim DataFrame (IODA_SLIM_COLS, native units). Each IODA file is a 1-hour
+    cycle; we read cycles [t-window .. t] so the window is fully covered (the extra
+    t-window cycle only contributes stragglers that are filtered out downstream).
+    Missing cycle files yield empty frames (skipped), exactly like the MADIS path.
+    """
+    cycles = [analysis_time - dt.timedelta(hours=h) for h in range(obs_time_window, -1, -1)]
+    frames = [_load_ioda_file(ioda_cycle_path(c, ioda_root), qc_good_flags=qc_good_flags)
+              for c in cycles]
+    df = pd.concat(frames, ignore_index=True)
+    # Concatenating with empty (missing-cycle) frames can upcast columns to object
+    # dtype. Coerce OBS_TIMESTAMP back so the downstream string-based window select
+    # works, and the numeric channels back to float -- otherwise an object dtype
+    # survives into min_max_norm's np.where clamp, producing a mixed float/int object
+    # array that to_netcdf cannot serialize ("unable to infer dtype on variable").
+    df["OBS_TIMESTAMP"] = pd.to_datetime(df["OBS_TIMESTAMP"], errors="coerce")
+    for col in ["lat", "lon"] + IODA_VALUE_VARS:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+###################
+
+def select_and_clean_ioda_obs(df_master, analysis_time, obs_time_window,
+                              drop_nans=True, convert_units=True, rename_data_vars=True):
+    """
+    IODA analogue of select_and_clean_mesonet_obs. Subselects df_master to the obs
+    window, drops incomplete rows, converts units, and renames all five channels to
+    the ADAF sta_* contract. There is NO wind or humidity derivation here -- IODA
+    already provides specific humidity and split u/v winds.
+
+    - drop_nans (default True): drop rows where any channel is NaN. Because the
+      mass/wind reports were merged upstream, a NaN here means the station genuinely
+      lacks that channel; dropping enforces the same "all five channels present"
+      contract as the METAR path.
+    - convert_units (default True): airTemperature K->C, stationPressure Pa->hPa.
+      (specificHumidity already kg/kg; winds already m/s.)
+    - rename_data_vars (default True): airTemperature->sta_t, stationPressure->sta_p,
+      specificHumidity->sta_q, windEastward->sta_u10, windNorthward->sta_v10.
+    """
+    time_sel_str_start = (analysis_time - dt.timedelta(hours=obs_time_window) + dt.timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
+    time_sel_str_end = analysis_time.strftime("%Y-%m-%d %H:%M:%S")
+
+    df = df_master[df_master['OBS_TIMESTAMP'].between(time_sel_str_start, time_sel_str_end)].copy()
+
+    if drop_nans:
+        df = df.dropna()
+    if convert_units:
+        df["airTemperature"] = df["airTemperature"] - 273.15   # K -> C
+        df["stationPressure"] = df["stationPressure"] * 0.01    # Pa -> hPa
+    if rename_data_vars:
+        df = df.rename(columns={"airTemperature": "sta_t", "stationPressure": "sta_p",
+                                "specificHumidity": "sta_q", "windEastward": "sta_u10",
+                                "windNorthward": "sta_v10"})
+    return df
+
+###################
+
+def assemble_complete_ioda_df(df_master, analysis_time, obs_time_window, df_adaf_lats_lons,
+                              adaf_lat_min=24.675, adaf_lat_max=50.275,
+                              adaf_lon_min=231.975, adaf_lon_max=295.975,
+                              threshold_mins=30, max_dist_km=10):
+    """
+    IODA analogue of assemble_complete_mesonet_df. Produces the identical final
+    contract -- columns [lat, lon, OBS_TIMESTAMP, sta_t, sta_p, sta_q, sta_u10,
+    sta_v10] -- ready for min_max_norm_ignore_extreme_fill_nan_sta_df and
+    create_obs_xarray. Reuses the shared grid-snap / temporal / QC helpers; the only
+    steps the METAR path runs that are SKIPPED here are convert_wind_to_uv and
+    add_specific_humidity (IODA already provides split winds and specific humidity).
+    """
+    df = select_and_clean_ioda_obs(df_master, analysis_time, obs_time_window,
+                                   drop_nans=True, convert_units=True, rename_data_vars=True)
+    df = assign_closest_with_threshold(df, df_adaf_lats_lons,
+                                       lat_min=adaf_lat_min, lat_max=adaf_lat_max,
+                                       lon_min=adaf_lon_min, lon_max=adaf_lon_max,
+                                       max_dist_km=max_dist_km)
+    df = keep_closest_to_hour_per_location_with_time_threshold(df, threshold_mins=threshold_mins, past_obs_only=True)
+    df['OBS_TIMESTAMP'] = df['OBS_TIMESTAMP'].dt.ceil('h')
+    df = filter_obs_by_temporal_completeness(df, obs_time_window=obs_time_window)
+    df = reject_out_of_bounds_obs(df)
+
+    return df
 
 ###################
 
