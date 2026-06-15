@@ -474,6 +474,8 @@ class Trainer:
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
+
+    ### !! IMPORTANT !! ###
     parser.add_argument('--config_filepath', type=str, default="./config/params_default.yaml") #This should be changed per-run if modifying many params! If only modifying a few, passing in args on the command line should suffice
 
     args = set_user_params(parser)

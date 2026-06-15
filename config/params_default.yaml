@@ -52,9 +52,9 @@ base_config: &BASE_CONFIG
   in_chans: 21 #edit if no longer using surface pressure
   out_chans: 5 #edit if no longer using surface pressure
   img_size_x: 1280
-  img_size_y: 512
+  img_size_y: 512 
   window_size: 4
-  patch_size: 4
+  patch_size: 4 
   num_feat: 64
   drop_rate: 0.1
   drop_path_rate: 0.1
