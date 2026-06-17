@@ -1,0 +1,42 @@
+name: ADAF_environment
+channels:
+  - conda-forge
+dependencies:
+  - python=3.14
+  - affine
+  - asttokens
+  - bokeh
+  - cartopy
+  - cf-xarray
+  - cfgrib
+  - cloudpickle
+  - dask
+  - dask-core
+  - distributed
+  - eccodes
+  - esmf
+  - esmpy
+  - h5py
+  - ipykernel
+  - ipython
+  - jupyter_client
+  - jupyter_core
+  - jupyterlab
+  - matplotlib
+  - metpy
+  - netcdf4
+  - numba
+  - numpy
+  - pandas
+  - pillow
+  - pyarrow
+  - pygrib
+  - rasterio
+  - satpy
+  - scikit-learn
+  - scipy
+  - shapely
+  - timm
+  - xarray
+  - xesmf
+  - zarr
