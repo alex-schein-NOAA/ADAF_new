@@ -11,6 +11,7 @@ import xarray as xr
 
 # Geospatial & Analysis
 import xesmf
+import h5py
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from scipy.spatial import KDTree
@@ -24,7 +25,7 @@ from matplotlib import colors
 from matplotlib.markers import MarkerStyle
 
 # Custom Packages
-from nnja_ai import DataCatalog
+# from nnja_ai import DataCatalog
 from funcs_modified import *
 
 ##############################################################################################################
@@ -610,6 +611,80 @@ def reverse_norm_xr(xr_ds, var_name, stats_path=f"/scratch3/BMC/wrfruc/aschein/A
     xr_ds_tmp[var_name].data = data
     
     return xr_ds_tmp
+    
+
+###########################################################
+#################### MESONET FUNCTIONS ####################
+###########################################################
+
+def load_mesonet_into_dataframe_and_clean(path, 
+                                          ADAF_CHANNELS=None, 
+                                          GOOD_QM=None, 
+                                          QM_FILLVALUE=None, 
+                                          FLOAT_FILLVALUE=None,
+                                          LAT_BOUNDS=(24.0,50,0),
+                                          LON_BOUNDS=(235.0, 293.0),
+                                          drop_qm_cols=True):
+    """
+    Function to load Mesonet data (in IODA standard) from disk and turn it into a cleaned-up pandas Dataframe.
+    """
+    # Enforce that the user must explicitly pass all configuration values
+    if (ADAF_CHANNELS is None or GOOD_QM is None or QM_FILLVALUE is None or FLOAT_FILLVALUE is None):
+        raise ValueError("Missing required arguments. You must explicitly provide: ADAF_CHANNELS, GOOD_QM, QM_FILLVALUE, and FLOAT_FILLVALUE.")
+
+    d = {}
+    
+    with h5py.File(path, "r") as f:
+        d["lat"] = f["MetaData/latitude"][:]
+        d["lon"] = f["MetaData/longitude"][:]
+        
+        # Convert timestamps to datetime objects immediately
+        d["OBS_TIMESTAMP"] = pd.to_datetime(f["MetaData/dateTime"][:], unit='s', origin='unix', errors='coerce')
+        
+        for v in ADAF_CHANNELS:
+            d[v] = f[f"ObsValue/{v}"][:].astype("float64")
+            qmkey = f"QualityMarker/{v}"
+            d[v + "_qm"] = f[qmkey][:] if qmkey in f else np.full(d[v].shape, QM_FILLVALUE, dtype="int32") # Fallback array if QM doesn't exist
+
+    # Load into a DataFrame for vectorized row operations
+    df = pd.DataFrame(d)
+    
+    # Geographic Bounding Box Filter (Applied early to optimize groupby performance)
+    df = df[(df["lat"] >= LAT_BOUNDS[0]) & (df["lat"] <= LAT_BOUNDS[1])]
+    df = df[(df["lon"] >= LON_BOUNDS[0]) & (df["lon"] <= LON_BOUNDS[1])]
+    
+    # Mask all fill values to NaN so the merge process can identify valid data
+    for v in ADAF_CHANNELS:
+        df[v] = df[v].mask(df[v] > FLOAT_FILLVALUE, np.nan)
+        df[v + "_qm"] = df[v + "_qm"].replace(QM_FILLVALUE, np.nan)
+        
+    # Merge the split station rows
+    # groupby().first() combines rows matching on lat/lon/time, choosing the first non-NaN element
+    df_merged = df.groupby(["lat", "lon", "OBS_TIMESTAMP"], as_index=False, dropna=False).first()
+    
+    #Rename columns to the new schema and define qm_cols early
+    rename_dict = {}
+    for long_name, short_name in ADAF_CHANNELS.items():
+        rename_dict[long_name] = f"sta_{short_name}"
+        rename_dict[f"{long_name}_qm"] = f"sta_{short_name}_qm"
+        
+    df_merged = df_merged.rename(columns=rename_dict)
+    
+    # Filter out rows with bad Quality Markers
+    # Keeps rows if the QM is in GOOD_QM; if the QM is NaN (meaning that variable wasn't recorded) it's dropped
+    qm_cols = [x for x in rename_dict.values() if "_qm" in x]
+    valid_qm_mask = df_merged[qm_cols].isin(GOOD_QM)
+    df_clean = df_merged[valid_qm_mask.all(axis=1)]
+
+    # Handle Quality Marker columns based on user preference
+    if drop_qm_cols:
+        df_clean = df_clean.drop(columns=qm_cols)
+    else:
+        df_clean[qm_cols] = df_clean[qm_cols].astype("Int32") #Convert quality marker columns back to ints+NaNs allowed ("Int32")
+    
+    # Clean up the index and return the final DataFrame
+    return df_clean.reset_index(drop=True)
+    
     
 #################################################################
 #################### MISCELLANEOUS FUNCTIONS ####################
