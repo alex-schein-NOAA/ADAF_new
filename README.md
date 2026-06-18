@@ -3,7 +3,7 @@
 The provided ADAF_environment.yml file works to set up a conda environment that will run all the included scripts.
 !! EXTREMELY IMPORTANT !!
 If you're on an HPC login node without a GPU, the install will not see cuda and will default to CPU-only install.
-To fix this, you MUST first get the CUDA version on a GPU compute node with "nvidia-smi" (should be 13.1 or similar) and then on the login node, run "export CONDA-OVERRIDE_CUDA=13.1" (or your CUDA version).
+To fix this, you MUST first get the CUDA version on a GPU compute node with "nvidia-smi" (should be 13.1 or similar) and then on the login node, run "export CONDA_OVERRIDE_CUDA=13.1" (or your CUDA version).
 Again, do this BEFORE any conda installation!!
 
 ## MODEL TRAINING ##
